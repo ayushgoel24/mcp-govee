@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { FastifyInstance } from 'fastify';
 import { createServer } from '../../../src/server.js';
 import { resetConfig, type Config } from '../../../src/config/index.js';
-import type { GoveeDevice } from '../../../src/types/index.js';
+import { mockDevices } from '../mocks/index.js';
 
 // Mock the GoveeClient
 const mockGetDevices = vi.fn();
@@ -35,25 +35,6 @@ describe('Devices Routes', () => {
     coalesceWindowMs: 200,
     logLevel: 'error',
   };
-
-  const mockGoveeDevices: GoveeDevice[] = [
-    {
-      device: 'AA:BB:CC:DD:EE:FF',
-      model: 'H6160',
-      deviceName: 'Living Room Light',
-      controllable: true,
-      retrievable: true,
-      supportCmds: ['turn', 'brightness', 'color'],
-    },
-    {
-      device: '11:22:33:44:55:66',
-      model: 'H6141',
-      deviceName: 'Bedroom Light',
-      controllable: true,
-      retrievable: true,
-      supportCmds: ['turn', 'brightness'],
-    },
-  ];
 
   beforeAll(async () => {
     server = createServer({ config: testConfig });
@@ -121,7 +102,7 @@ describe('Devices Routes', () => {
       });
 
       it('should accept valid token', async () => {
-        mockGetDevices.mockResolvedValueOnce(mockGoveeDevices);
+        mockGetDevices.mockResolvedValueOnce(mockDevices);
 
         const response = await server.inject({
           method: 'GET',
@@ -135,7 +116,7 @@ describe('Devices Routes', () => {
       });
 
       it('should accept any valid token from the list', async () => {
-        mockGetDevices.mockResolvedValueOnce(mockGoveeDevices);
+        mockGetDevices.mockResolvedValueOnce(mockDevices);
 
         const response = await server.inject({
           method: 'GET',
@@ -149,9 +130,9 @@ describe('Devices Routes', () => {
       });
     });
 
-    describe('response format', () => {
-      it('should return devices with ok: true format', async () => {
-        mockGetDevices.mockResolvedValueOnce(mockGoveeDevices);
+    describe('device discovery - fresh fetch from API', () => {
+      it('should fetch devices from API on first call', async () => {
+        mockGetDevices.mockResolvedValueOnce(mockDevices);
 
         const response = await server.inject({
           method: 'GET',
@@ -164,13 +145,13 @@ describe('Devices Routes', () => {
         expect(response.statusCode).toBe(200);
         const body = response.json();
         expect(body.ok).toBe(true);
-        expect(body.result).toBeDefined();
-        expect(body.result.devices).toBeInstanceOf(Array);
-        expect(body.result.devices).toHaveLength(2);
+        expect(body.result.cached).toBe(false);
+        expect(body.result.cacheAge).toBe(0);
+        expect(mockGetDevices).toHaveBeenCalledTimes(1);
       });
 
-      it('should return transformed device objects', async () => {
-        mockGetDevices.mockResolvedValueOnce(mockGoveeDevices);
+      it('should return all devices from API', async () => {
+        mockGetDevices.mockResolvedValueOnce(mockDevices);
 
         const response = await server.inject({
           method: 'GET',
@@ -181,20 +162,11 @@ describe('Devices Routes', () => {
         });
 
         const body = response.json();
-        const device = body.result.devices[0];
-
-        expect(device).toMatchObject({
-          deviceId: 'AA:BB:CC:DD:EE:FF',
-          model: 'H6160',
-          deviceName: 'Living Room Light',
-          controllable: true,
-          retrievable: true,
-          supportedCommands: ['turn', 'brightness', 'color'],
-        });
+        expect(body.result.devices).toHaveLength(mockDevices.length);
       });
 
-      it('should return JSON content type', async () => {
-        mockGetDevices.mockResolvedValueOnce(mockGoveeDevices);
+      it('should handle empty device list', async () => {
+        mockGetDevices.mockResolvedValueOnce([]);
 
         const response = await server.inject({
           method: 'GET',
@@ -204,31 +176,18 @@ describe('Devices Routes', () => {
           },
         });
 
-        expect(response.headers['content-type']).toContain('application/json');
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(true);
+        expect(body.result.devices).toHaveLength(0);
       });
     });
 
-    describe('caching', () => {
-      it('should indicate fresh response on first call', async () => {
-        mockGetDevices.mockResolvedValueOnce(mockGoveeDevices);
+    describe('device discovery - cached response', () => {
+      it('should return cached response on subsequent calls', async () => {
+        mockGetDevices.mockResolvedValueOnce(mockDevices);
 
-        const response = await server.inject({
-          method: 'GET',
-          url: '/devices',
-          headers: {
-            'x-mcp-auth': 'test-token',
-          },
-        });
-
-        const body = response.json();
-        expect(body.result.cached).toBe(false);
-        expect(body.result.cacheAge).toBe(0);
-      });
-
-      it('should indicate cached response on subsequent calls', async () => {
-        mockGetDevices.mockResolvedValueOnce(mockGoveeDevices);
-
-        // First call
+        // First call - fetches from API
         await server.inject({
           method: 'GET',
           url: '/devices',
@@ -237,7 +196,7 @@ describe('Devices Routes', () => {
           },
         });
 
-        // Second call
+        // Second call - should use cache
         const response = await server.inject({
           method: 'GET',
           url: '/devices',
@@ -248,11 +207,11 @@ describe('Devices Routes', () => {
 
         const body = response.json();
         expect(body.result.cached).toBe(true);
-        expect(mockGetDevices).toHaveBeenCalledTimes(1);
+        expect(mockGetDevices).toHaveBeenCalledTimes(1); // Only called once
       });
 
       it('should include cacheAge for cached responses', async () => {
-        mockGetDevices.mockResolvedValueOnce(mockGoveeDevices);
+        mockGetDevices.mockResolvedValueOnce(mockDevices);
 
         // First call
         await server.inject({
@@ -276,10 +235,37 @@ describe('Devices Routes', () => {
         expect(typeof body.result.cacheAge).toBe('number');
         expect(body.result.cacheAge).toBeGreaterThanOrEqual(0);
       });
+
+      it('should return same data from cache', async () => {
+        mockGetDevices.mockResolvedValueOnce(mockDevices);
+
+        // First call
+        const firstResponse = await server.inject({
+          method: 'GET',
+          url: '/devices',
+          headers: {
+            'x-mcp-auth': 'test-token',
+          },
+        });
+
+        // Second call
+        const secondResponse = await server.inject({
+          method: 'GET',
+          url: '/devices',
+          headers: {
+            'x-mcp-auth': 'test-token',
+          },
+        });
+
+        const firstBody = firstResponse.json();
+        const secondBody = secondResponse.json();
+
+        expect(secondBody.result.devices).toEqual(firstBody.result.devices);
+      });
     });
 
-    describe('error handling', () => {
-      it('should handle API errors gracefully', async () => {
+    describe('device discovery - API error handling', () => {
+      it('should handle API unavailable error (502)', async () => {
         const { GoveeApiError, ErrorCode } = await import('../../../src/utils/errors.js');
         mockGetDevices.mockRejectedValueOnce(
           new GoveeApiError(ErrorCode.GOVEE_UNAVAILABLE, 'API unavailable', 502)
@@ -297,6 +283,103 @@ describe('Devices Routes', () => {
         const body = response.json();
         expect(body.ok).toBe(false);
         expect(body.error.code).toBe('GOVEE_UNAVAILABLE');
+      });
+
+      it('should handle rate limit error (503)', async () => {
+        const { GoveeApiError, ErrorCode } = await import('../../../src/utils/errors.js');
+        mockGetDevices.mockRejectedValueOnce(
+          new GoveeApiError(ErrorCode.GOVEE_RATE_LIMITED, 'Rate limit exceeded', 503)
+        );
+
+        const response = await server.inject({
+          method: 'GET',
+          url: '/devices',
+          headers: {
+            'x-mcp-auth': 'test-token',
+          },
+        });
+
+        expect(response.statusCode).toBe(503);
+        const body = response.json();
+        expect(body.ok).toBe(false);
+        expect(body.error.code).toBe('GOVEE_RATE_LIMITED');
+      });
+
+      it('should handle authentication error from Govee API', async () => {
+        const { GoveeApiError, ErrorCode } = await import('../../../src/utils/errors.js');
+        mockGetDevices.mockRejectedValueOnce(
+          new GoveeApiError(ErrorCode.GOVEE_API_ERROR, 'Invalid API key', 401)
+        );
+
+        const response = await server.inject({
+          method: 'GET',
+          url: '/devices',
+          headers: {
+            'x-mcp-auth': 'test-token',
+          },
+        });
+
+        expect(response.statusCode).toBe(401);
+        const body = response.json();
+        expect(body.ok).toBe(false);
+      });
+    });
+
+    describe('response format', () => {
+      it('should return devices with ok: true format', async () => {
+        mockGetDevices.mockResolvedValueOnce(mockDevices);
+
+        const response = await server.inject({
+          method: 'GET',
+          url: '/devices',
+          headers: {
+            'x-mcp-auth': 'test-token',
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(true);
+        expect(body.result).toBeDefined();
+        expect(body.result.devices).toBeInstanceOf(Array);
+      });
+
+      it('should return transformed device objects', async () => {
+        mockGetDevices.mockResolvedValueOnce(mockDevices);
+
+        const response = await server.inject({
+          method: 'GET',
+          url: '/devices',
+          headers: {
+            'x-mcp-auth': 'test-token',
+          },
+        });
+
+        const body = response.json();
+        const device = body.result.devices[0];
+
+        expect(device).toMatchObject({
+          deviceId: 'AA:BB:CC:DD:EE:FF',
+          model: 'H6160',
+          deviceName: 'Living Room Light',
+          controllable: true,
+          retrievable: true,
+          supportedCommands: ['turn', 'brightness', 'color'],
+        });
+      });
+
+      it('should return JSON content type', async () => {
+        mockGetDevices.mockResolvedValueOnce(mockDevices);
+
+        const response = await server.inject({
+          method: 'GET',
+          url: '/devices',
+          headers: {
+            'x-mcp-auth': 'test-token',
+          },
+        });
+
+        expect(response.headers['content-type']).toContain('application/json');
       });
     });
   });
