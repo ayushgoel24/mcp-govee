@@ -4,6 +4,7 @@ import { getConfig, type Config } from './config/index.js';
 import { healthRoutes } from './routes/health.js';
 import { requestIdPlugin } from './middleware/requestId.js';
 import { authPlugin } from './middleware/auth.js';
+import { errorHandlerPlugin } from './utils/errorHandler.js';
 
 export interface ServerOptions {
   config?: Config;
@@ -42,6 +43,7 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
   // Register plugins
   void server.register(requestIdPlugin);
   void server.register(authPlugin, { tokens: config.mcpClientTokens });
+  void server.register(errorHandlerPlugin, { nodeEnv: config.nodeEnv });
 
   // Register routes
   void server.register(healthRoutes);
