@@ -2,6 +2,7 @@ import Fastify, { FastifyInstance, FastifyRequest } from 'fastify';
 import { randomUUID } from 'crypto';
 import { getConfig, type Config } from './config/index.js';
 import { healthRoutes } from './routes/health.js';
+import { requestIdPlugin } from './middleware/requestId.js';
 
 export interface ServerOptions {
   config?: Config;
@@ -36,6 +37,9 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
     genReqId: (): string => randomUUID(),
     disableRequestLogging: false,
   });
+
+  // Register plugins
+  void server.register(requestIdPlugin);
 
   // Register routes
   void server.register(healthRoutes);
