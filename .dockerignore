@@ -1,0 +1,48 @@
+# Dependencies
+node_modules
+
+# Build output (rebuilt in container)
+dist
+
+# Test files
+tests
+coverage
+*.test.ts
+vitest.config.ts
+
+# Development files
+.env
+.env.*
+!.env.example
+
+# IDE and editor files
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Docker files (prevent recursive copying)
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs
+
+# Claude/Helios config
+.claude
+.helios
