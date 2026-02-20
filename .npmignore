@@ -1,0 +1,38 @@
+# Source files
+src/
+tests/
+
+# Configuration files
+.env
+.env.*
+.eslintrc.*
+tsconfig.json
+vitest.config.ts
+docker-compose.yml
+Dockerfile
+
+# Build artifacts
+*.tsbuildinfo
+coverage/
+.vitest/
+
+# Development files
+.vscode/
+.idea/
+*.log
+npm-debug.log*
+
+# Git
+.git/
+.gitignore
+.github/
+
+# Documentation (keep README.md)
+docs/
+
+# Scripts
+scripts/
+
+# Helios and Claude
+.helios/
+.claude/
