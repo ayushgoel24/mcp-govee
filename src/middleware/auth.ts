@@ -1,8 +1,14 @@
-import { FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyRequest, FastifyReply, FastifyInstance } from 'fastify';
 import { timingSafeEqual } from 'crypto';
-import { getConfig } from '../config/index.js';
+import fp from 'fastify-plugin';
 
 const AUTH_HEADER = 'x-mcp-auth';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    mcpClientTokens: string[];
+  }
+}
 
 function constantTimeCompare(a: string, b: string): boolean {
   try {
@@ -35,11 +41,23 @@ export function validateToken(token: string, validTokens: string[]): boolean {
   return false;
 }
 
+export interface AuthPluginOptions {
+  tokens: string[];
+}
+
+async function authPluginImpl(fastify: FastifyInstance, options: AuthPluginOptions): Promise<void> {
+  fastify.decorate('mcpClientTokens', options.tokens);
+}
+
+export const authPlugin = fp(authPluginImpl, {
+  name: 'auth-plugin',
+});
+
 export async function authenticate(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
-  const config = getConfig();
+  const tokens = request.server.mcpClientTokens;
   const authHeader = request.headers[AUTH_HEADER];
 
   if (typeof authHeader !== 'string' || authHeader === '') {
@@ -52,7 +70,7 @@ export async function authenticate(
     });
   }
 
-  if (!validateToken(authHeader, config.mcpClientTokens)) {
+  if (!validateToken(authHeader, tokens)) {
     return reply.code(401).send({
       ok: false,
       error: {
