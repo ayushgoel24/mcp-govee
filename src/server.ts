@@ -2,9 +2,18 @@ import Fastify, { FastifyInstance, FastifyRequest } from 'fastify';
 import { randomUUID } from 'crypto';
 import { getConfig, type Config } from './config/index.js';
 import { healthRoutes } from './routes/health.js';
+import { devicesRoutes } from './routes/devices.js';
 import { requestIdPlugin } from './middleware/requestId.js';
 import { authPlugin } from './middleware/auth.js';
 import { errorHandlerPlugin } from './utils/errorHandler.js';
+import { GoveeClient } from './clients/govee.client.js';
+import { DeviceService } from './services/device.service.js';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    deviceService: DeviceService;
+  }
+}
 
 export interface ServerOptions {
   config?: Config;
@@ -45,8 +54,14 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
   void server.register(authPlugin, { tokens: config.mcpClientTokens });
   void server.register(errorHandlerPlugin, { nodeEnv: config.nodeEnv });
 
+  // Initialize services
+  const goveeClient = GoveeClient.fromConfig(config);
+  const deviceService = new DeviceService(goveeClient, config);
+  server.decorate('deviceService', deviceService);
+
   // Register routes
   void server.register(healthRoutes);
+  void server.register(devicesRoutes);
 
   return server;
 }
