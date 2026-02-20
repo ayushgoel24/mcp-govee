@@ -10,10 +10,13 @@ describe('GoveeClient', () => {
   let client: GoveeClient;
 
   beforeEach(() => {
+    // Create client with retries disabled for unit tests
+    // Retry behavior is tested separately in retry.test.ts
     client = new GoveeClient({
       apiKey: 'test-api-key',
       baseUrl: 'https://api.govee.test',
       timeoutMs: 1000,
+      maxRetries: 0,
     });
     vi.clearAllMocks();
   });

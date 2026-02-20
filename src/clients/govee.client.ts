@@ -6,6 +6,7 @@ import type {
   GoveeControlParams,
 } from '../types/index.js';
 import { GoveeApiError } from '../utils/errors.js';
+import { RetryHandler, type RetryLogger } from '../utils/retry.js';
 
 const GOVEE_API_BASE_URL = 'https://developer-api.govee.com';
 const REQUEST_TIMEOUT_MS = 10000;
@@ -14,32 +15,50 @@ export interface GoveeClientOptions {
   apiKey: string;
   baseUrl?: string;
   timeoutMs?: number;
+  maxRetries?: number;
+  initialBackoffMs?: number;
+  maxBackoffMs?: number;
+  logger?: RetryLogger;
 }
 
 export class GoveeClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
+  private readonly maxRetries: number;
+  private readonly initialBackoffMs: number;
+  private readonly maxBackoffMs: number;
+  private readonly logger?: RetryLogger;
 
   constructor(options: GoveeClientOptions) {
     this.apiKey = options.apiKey;
     this.baseUrl = options.baseUrl ?? GOVEE_API_BASE_URL;
     this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+    this.maxRetries = options.maxRetries ?? 3;
+    this.initialBackoffMs = options.initialBackoffMs ?? 1000;
+    this.maxBackoffMs = options.maxBackoffMs ?? 10000;
+    this.logger = options.logger;
   }
 
-  static fromConfig(config: Config): GoveeClient {
+  static fromConfig(config: Config, logger?: RetryLogger): GoveeClient {
     return new GoveeClient({
       apiKey: config.goveeApiKey,
+      maxRetries: config.maxRetries,
+      initialBackoffMs: config.initialBackoffMs,
+      maxBackoffMs: config.maxBackoffMs,
+      logger,
     });
   }
 
   /**
    * Get all devices from Govee API
    */
-  async getDevices(): Promise<GoveeDevice[]> {
-    const response = await this.request<GoveeDeviceListResponse>(
+  async getDevices(correlationId?: string): Promise<GoveeDevice[]> {
+    const response = await this.requestWithRetry<GoveeDeviceListResponse>(
       'GET',
-      '/v1/devices'
+      '/v1/devices',
+      undefined,
+      correlationId
     );
     return response.data.devices;
   }
@@ -47,13 +66,19 @@ export class GoveeClient {
   /**
    * Send control command to a device
    */
-  async controlDevice(params: GoveeControlParams): Promise<GoveeApiResponse> {
-    return this.request<GoveeApiResponse>('PUT', '/v1/devices/control', params);
+  async controlDevice(params: GoveeControlParams, correlationId?: string): Promise<GoveeApiResponse> {
+    return this.requestWithRetry<GoveeApiResponse>(
+      'PUT',
+      '/v1/devices/control',
+      params,
+      correlationId
+    );
   }
 
   /**
    * Health check - verify API is reachable
    * Returns true if API responds, false otherwise
+   * Note: Health check does NOT retry - single attempt only
    */
   async healthCheck(): Promise<boolean> {
     try {
@@ -62,6 +87,27 @@ export class GoveeClient {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Execute a request with retry logic for transient failures.
+   * Retries on 429, 5xx, and network timeouts.
+   */
+  private async requestWithRetry<T>(
+    method: 'GET' | 'PUT' | 'POST',
+    path: string,
+    body?: unknown,
+    correlationId?: string
+  ): Promise<T> {
+    const retryHandler = new RetryHandler({
+      maxRetries: this.maxRetries,
+      initialBackoffMs: this.initialBackoffMs,
+      maxBackoffMs: this.maxBackoffMs,
+      correlationId,
+      logger: this.logger,
+    });
+
+    return retryHandler.execute(() => this.request<T>(method, path, body));
   }
 
   /**
