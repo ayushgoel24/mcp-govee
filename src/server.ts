@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { getConfig, type Config } from './config/index.js';
 import { healthRoutes } from './routes/health.js';
 import { requestIdPlugin } from './middleware/requestId.js';
+import { authPlugin } from './middleware/auth.js';
 
 export interface ServerOptions {
   config?: Config;
@@ -40,6 +41,7 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
 
   // Register plugins
   void server.register(requestIdPlugin);
+  void server.register(authPlugin, { tokens: config.mcpClientTokens });
 
   // Register routes
   void server.register(healthRoutes);
