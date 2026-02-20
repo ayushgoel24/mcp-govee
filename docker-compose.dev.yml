@@ -1,0 +1,18 @@
+version: '3.8'
+
+# Development override - use with:
+# docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  govee-mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder  # Use builder stage with dev dependencies
+    volumes:
+      - ./src:/app/src:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+    environment:
+      - NODE_ENV=development
+      - LOG_LEVEL=debug
+    command: ["npm", "run", "dev"]
