@@ -3,6 +3,8 @@ export interface QueuedCommand {
   params: unknown;
   timestamp: number;
   correlationId: string;
+  /** Correlation IDs of commands that were merged into this one */
+  mergedCorrelationIds?: string[];
 }
 
 export interface CommandResult {
@@ -12,6 +14,8 @@ export interface CommandResult {
     code: string;
     message: string;
   };
+  /** Correlation IDs of all commands that contributed to this result */
+  correlationIds?: string[];
 }
 
 type CommandExecutor = (command: QueuedCommand) => Promise<CommandResult>;
@@ -22,22 +26,35 @@ interface QueueEntry {
   reject: (error: Error) => void;
 }
 
+export interface DeviceQueueOptions {
+  /** Coalesce window in milliseconds. Commands of the same type within this window are merged. Default: 0 (disabled) */
+  coalesceWindowMs?: number;
+}
+
 /**
  * Per-device command queue that processes commands sequentially
  * to prevent rate limiting and ensure ordered execution.
+ *
+ * Supports command coalescing: commands of the same type within
+ * the coalesce window are merged using last-write-wins semantics.
  */
 export class DeviceQueue {
   private readonly queues: Map<string, QueueEntry[]> = new Map();
   private readonly processing: Map<string, boolean> = new Map();
   private readonly executor: CommandExecutor;
+  private readonly coalesceWindowMs: number;
 
-  constructor(executor: CommandExecutor) {
+  constructor(executor: CommandExecutor, options: DeviceQueueOptions = {}) {
     this.executor = executor;
+    this.coalesceWindowMs = options.coalesceWindowMs ?? 0;
   }
 
   /**
    * Enqueue a command for a specific device.
    * Returns a promise that resolves when the command is processed.
+   *
+   * If coalescing is enabled and there's a pending command of the same type
+   * within the coalesce window, the new command replaces it (last-write-wins).
    */
   enqueue(deviceId: string, command: QueuedCommand): Promise<CommandResult> {
     return new Promise((resolve, reject) => {
@@ -48,12 +65,103 @@ export class DeviceQueue {
         this.queues.set(deviceId, queue);
       }
 
+      // Try to coalesce with existing command
+      if (this.coalesceWindowMs > 0) {
+        const coalesced = this.tryCoalesce(queue, command, resolve, reject);
+        if (coalesced) {
+          // Command was merged - don't add a new entry
+          return;
+        }
+      }
+
       // Add command to queue
       queue.push({ command, resolve, reject });
 
       // Start processing if not already running
       void this.processQueue(deviceId);
     });
+  }
+
+  /**
+   * Try to coalesce a new command with an existing pending command.
+   * Returns true if the command was merged, false otherwise.
+   */
+  private tryCoalesce(
+    queue: QueueEntry[],
+    newCommand: QueuedCommand,
+    newResolve: (result: CommandResult) => void,
+    newReject: (error: Error) => void
+  ): boolean {
+    const now = newCommand.timestamp;
+
+    // Find the last pending command of the same type within the coalesce window
+    for (let i = queue.length - 1; i >= 0; i--) {
+      const entry = queue[i];
+      if (entry === undefined) continue;
+
+      const existingCommand = entry.command;
+
+      // Check if same command type
+      if (existingCommand.type !== newCommand.type) {
+        continue;
+      }
+
+      // Check if within coalesce window
+      const age = now - existingCommand.timestamp;
+      if (age > this.coalesceWindowMs) {
+        continue;
+      }
+
+      // Found a command to coalesce with - use last-write-wins
+      // Collect all merged correlation IDs
+      const mergedIds = [
+        existingCommand.correlationId,
+        ...(existingCommand.mergedCorrelationIds ?? []),
+      ];
+
+      // Create merged command with new params but preserving merged IDs
+      const mergedCommand: QueuedCommand = {
+        type: newCommand.type,
+        params: newCommand.params, // Last-write-wins
+        timestamp: newCommand.timestamp,
+        correlationId: newCommand.correlationId,
+        mergedCorrelationIds: mergedIds,
+      };
+
+      // Create a combined resolver that notifies both callers
+      const originalResolve = entry.resolve;
+      const originalReject = entry.reject;
+
+      const combinedResolve = (result: CommandResult): void => {
+        // Add all correlation IDs to the result
+        const allIds = [
+          mergedCommand.correlationId,
+          ...(mergedCommand.mergedCorrelationIds ?? []),
+        ];
+        const resultWithIds: CommandResult = {
+          ...result,
+          correlationIds: allIds,
+        };
+        originalResolve(resultWithIds);
+        newResolve(resultWithIds);
+      };
+
+      const combinedReject = (error: Error): void => {
+        originalReject(error);
+        newReject(error);
+      };
+
+      // Replace the queue entry
+      queue[i] = {
+        command: mergedCommand,
+        resolve: combinedResolve,
+        reject: combinedReject,
+      };
+
+      return true;
+    }
+
+    return false;
   }
 
   /**
