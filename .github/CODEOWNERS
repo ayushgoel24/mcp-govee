@@ -1,0 +1,11 @@
+# Default owner for everything
+* @ayushgoel24
+
+# CI/CD configuration
+/.github/ @ayushgoel24
+
+# Source code
+/src/ @ayushgoel24
+
+# Tests
+/tests/ @ayushgoel24
