@@ -3,6 +3,7 @@ import { FastifyInstance } from 'fastify';
 import { createServer } from '../../../src/server.js';
 import { resetConfig, type Config } from '../../../src/config/index.js';
 import type { GoveeDevice } from '../../../src/types/index.js';
+import { mockDevices, successfulControlResponse } from '../mocks/index.js';
 
 // Mock the GoveeClient
 const mockGetDevices = vi.fn();
@@ -37,16 +38,15 @@ describe('MCP Routes', () => {
     logLevel: 'error',
   };
 
-  const mockGoveeDevices: GoveeDevice[] = [
-    {
-      device: 'AA:BB:CC:DD:EE:FF',
-      model: 'H6160',
-      deviceName: 'Living Room Light',
-      controllable: true,
-      retrievable: true,
-      supportCmds: ['turn', 'brightness', 'color'],
-    },
-  ];
+  // Device that only supports turn and brightness (no color)
+  const deviceWithoutColor: GoveeDevice = {
+    device: '11:22:33:44:55:66',
+    model: 'H6141',
+    deviceName: 'Bedroom Light',
+    controllable: true,
+    retrievable: true,
+    supportCmds: ['turn', 'brightness'],
+  };
 
   beforeAll(async () => {
     server = createServer({ config: testConfig });
@@ -126,7 +126,7 @@ describe('MCP Routes', () => {
 
     describe('list_devices tool', () => {
       it('should return device list', async () => {
-        mockGetDevices.mockResolvedValueOnce(mockGoveeDevices);
+        mockGetDevices.mockResolvedValueOnce(mockDevices);
 
         const response = await server.inject({
           method: 'POST',
@@ -138,14 +138,14 @@ describe('MCP Routes', () => {
         expect(response.statusCode).toBe(200);
         const body = response.json();
         expect(body.ok).toBe(true);
-        expect(body.result.devices).toHaveLength(1);
+        expect(body.result.devices).toHaveLength(mockDevices.length);
       });
     });
 
-    describe('turn tool', () => {
+    describe('device control - turn on/off commands', () => {
       it('should turn device on', async () => {
-        mockGetDevices.mockResolvedValue(mockGoveeDevices);
-        mockControlDevice.mockResolvedValue({ code: 200, message: 'success' });
+        mockGetDevices.mockResolvedValue(mockDevices);
+        mockControlDevice.mockResolvedValue(successfulControlResponse);
 
         const response = await server.inject({
           method: 'POST',
@@ -168,8 +168,8 @@ describe('MCP Routes', () => {
       });
 
       it('should turn device off', async () => {
-        mockGetDevices.mockResolvedValue(mockGoveeDevices);
-        mockControlDevice.mockResolvedValue({ code: 200, message: 'success' });
+        mockGetDevices.mockResolvedValue(mockDevices);
+        mockControlDevice.mockResolvedValue(successfulControlResponse);
 
         const response = await server.inject({
           method: 'POST',
@@ -184,6 +184,11 @@ describe('MCP Routes', () => {
         expect(response.statusCode).toBe(200);
         const body = response.json();
         expect(body.ok).toBe(true);
+        expect(mockControlDevice).toHaveBeenCalledWith({
+          device: 'AA:BB:CC:DD:EE:FF',
+          model: 'H6160',
+          cmd: { name: 'turn', value: 'off' },
+        });
       });
 
       it('should return error for invalid power value', async () => {
@@ -221,10 +226,10 @@ describe('MCP Routes', () => {
       });
     });
 
-    describe('brightness tool', () => {
+    describe('device control - brightness', () => {
       it('should set brightness level', async () => {
-        mockGetDevices.mockResolvedValue(mockGoveeDevices);
-        mockControlDevice.mockResolvedValue({ code: 200, message: 'success' });
+        mockGetDevices.mockResolvedValue(mockDevices);
+        mockControlDevice.mockResolvedValue(successfulControlResponse);
 
         const response = await server.inject({
           method: 'POST',
@@ -244,6 +249,44 @@ describe('MCP Routes', () => {
           model: 'H6160',
           cmd: { name: 'brightness', value: 50 },
         });
+      });
+
+      it('should set minimum brightness (1)', async () => {
+        mockGetDevices.mockResolvedValue(mockDevices);
+        mockControlDevice.mockResolvedValue(successfulControlResponse);
+
+        const response = await server.inject({
+          method: 'POST',
+          url: '/mcp/invoke',
+          headers: { 'x-mcp-auth': 'test-token' },
+          payload: {
+            tool: 'brightness',
+            params: { device: 'AA:BB:CC:DD:EE:FF', level: 1 },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(true);
+      });
+
+      it('should set maximum brightness (100)', async () => {
+        mockGetDevices.mockResolvedValue(mockDevices);
+        mockControlDevice.mockResolvedValue(successfulControlResponse);
+
+        const response = await server.inject({
+          method: 'POST',
+          url: '/mcp/invoke',
+          headers: { 'x-mcp-auth': 'test-token' },
+          payload: {
+            tool: 'brightness',
+            params: { device: 'AA:BB:CC:DD:EE:FF', level: 100 },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(true);
       });
 
       it('should return error for level below minimum', async () => {
@@ -281,10 +324,10 @@ describe('MCP Routes', () => {
       });
     });
 
-    describe('color tool', () => {
+    describe('device control - color', () => {
       it('should set RGB color', async () => {
-        mockGetDevices.mockResolvedValue(mockGoveeDevices);
-        mockControlDevice.mockResolvedValue({ code: 200, message: 'success' });
+        mockGetDevices.mockResolvedValue(mockDevices);
+        mockControlDevice.mockResolvedValue(successfulControlResponse);
 
         const response = await server.inject({
           method: 'POST',
@@ -304,6 +347,44 @@ describe('MCP Routes', () => {
           model: 'H6160',
           cmd: { name: 'color', value: { r: 255, g: 128, b: 64 } },
         });
+      });
+
+      it('should set color with minimum values (0, 0, 0)', async () => {
+        mockGetDevices.mockResolvedValue(mockDevices);
+        mockControlDevice.mockResolvedValue(successfulControlResponse);
+
+        const response = await server.inject({
+          method: 'POST',
+          url: '/mcp/invoke',
+          headers: { 'x-mcp-auth': 'test-token' },
+          payload: {
+            tool: 'color',
+            params: { device: 'AA:BB:CC:DD:EE:FF', r: 0, g: 0, b: 0 },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(true);
+      });
+
+      it('should set color with maximum values (255, 255, 255)', async () => {
+        mockGetDevices.mockResolvedValue(mockDevices);
+        mockControlDevice.mockResolvedValue(successfulControlResponse);
+
+        const response = await server.inject({
+          method: 'POST',
+          url: '/mcp/invoke',
+          headers: { 'x-mcp-auth': 'test-token' },
+          payload: {
+            tool: 'color',
+            params: { device: 'AA:BB:CC:DD:EE:FF', r: 255, g: 255, b: 255 },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(true);
       });
 
       it('should return error for missing color components', async () => {
@@ -339,11 +420,28 @@ describe('MCP Routes', () => {
         expect(body.ok).toBe(false);
         expect(body.error.code).toBe('INVALID_REQUEST');
       });
+
+      it('should return error for negative color value', async () => {
+        const response = await server.inject({
+          method: 'POST',
+          url: '/mcp/invoke',
+          headers: { 'x-mcp-auth': 'test-token' },
+          payload: {
+            tool: 'color',
+            params: { device: 'AA:BB:CC:DD:EE:FF', r: -1, g: 128, b: 64 },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(false);
+        expect(body.error.code).toBe('INVALID_REQUEST');
+      });
     });
 
-    describe('device errors', () => {
-      it('should return error when device not found', async () => {
-        mockGetDevices.mockResolvedValue(mockGoveeDevices);
+    describe('device not found scenarios', () => {
+      it('should return error when device not found for turn', async () => {
+        mockGetDevices.mockResolvedValue(mockDevices);
 
         const response = await server.inject({
           method: 'POST',
@@ -359,6 +457,103 @@ describe('MCP Routes', () => {
         const body = response.json();
         expect(body.ok).toBe(false);
         expect(body.error.code).toBe('DEVICE_NOT_FOUND');
+      });
+
+      it('should return error when device not found for brightness', async () => {
+        mockGetDevices.mockResolvedValue(mockDevices);
+
+        const response = await server.inject({
+          method: 'POST',
+          url: '/mcp/invoke',
+          headers: { 'x-mcp-auth': 'test-token' },
+          payload: {
+            tool: 'brightness',
+            params: { device: '00:00:00:00:00:00', level: 50 },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(false);
+        expect(body.error.code).toBe('DEVICE_NOT_FOUND');
+      });
+
+      it('should return error when device not found for color', async () => {
+        mockGetDevices.mockResolvedValue(mockDevices);
+
+        const response = await server.inject({
+          method: 'POST',
+          url: '/mcp/invoke',
+          headers: { 'x-mcp-auth': 'test-token' },
+          payload: {
+            tool: 'color',
+            params: { device: '00:00:00:00:00:00', r: 255, g: 128, b: 64 },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(false);
+        expect(body.error.code).toBe('DEVICE_NOT_FOUND');
+      });
+    });
+
+    describe('unsupported command scenarios', () => {
+      it('should return error for color command on device without color support', async () => {
+        mockGetDevices.mockResolvedValue([deviceWithoutColor]);
+
+        const response = await server.inject({
+          method: 'POST',
+          url: '/mcp/invoke',
+          headers: { 'x-mcp-auth': 'test-token' },
+          payload: {
+            tool: 'color',
+            params: { device: '11:22:33:44:55:66', r: 255, g: 128, b: 64 },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(false);
+        expect(body.error.code).toBe('COMMAND_NOT_SUPPORTED');
+      });
+
+      it('should allow turn command on device without color support', async () => {
+        mockGetDevices.mockResolvedValue([deviceWithoutColor]);
+        mockControlDevice.mockResolvedValue(successfulControlResponse);
+
+        const response = await server.inject({
+          method: 'POST',
+          url: '/mcp/invoke',
+          headers: { 'x-mcp-auth': 'test-token' },
+          payload: {
+            tool: 'turn',
+            params: { device: '11:22:33:44:55:66', power: 'on' },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(true);
+      });
+
+      it('should allow brightness command on device without color support', async () => {
+        mockGetDevices.mockResolvedValue([deviceWithoutColor]);
+        mockControlDevice.mockResolvedValue(successfulControlResponse);
+
+        const response = await server.inject({
+          method: 'POST',
+          url: '/mcp/invoke',
+          headers: { 'x-mcp-auth': 'test-token' },
+          payload: {
+            tool: 'brightness',
+            params: { device: '11:22:33:44:55:66', level: 50 },
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.ok).toBe(true);
       });
     });
   });
