@@ -15,7 +15,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src tests --ext .ts",
-    "lint:fix": "eslint src tests --ext .ts --fix"
+    "lint:fix": "eslint src tests --ext .ts --fix",
+    "docker:build": "docker build -t govee-mcp-server .",
+    "docker:test": "./scripts/test-docker-build.sh"
   },
   "keywords": [
     "govee",
