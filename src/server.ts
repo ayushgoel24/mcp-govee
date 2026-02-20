@@ -4,6 +4,7 @@ import { getConfig, type Config } from './config/index.js';
 import { healthRoutes } from './routes/health.js';
 import { devicesRoutes } from './routes/devices.js';
 import { mcpRoutes } from './routes/mcp.js';
+import { manifestRoutes } from './routes/manifest.js';
 import { requestIdPlugin } from './middleware/requestId.js';
 import { authPlugin } from './middleware/auth.js';
 import { errorHandlerPlugin } from './utils/errorHandler.js';
@@ -91,6 +92,7 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
   void server.register(healthRoutes);
   void server.register(devicesRoutes);
   void server.register(mcpRoutes);
+  void server.register(manifestRoutes);
 
   return server;
 }
