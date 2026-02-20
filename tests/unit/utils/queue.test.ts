@@ -227,4 +227,259 @@ describe('DeviceQueue', () => {
       expect(queue.getActiveDevices()).toEqual([]);
     });
   });
+
+  describe('coalescing', () => {
+    let coalescingQueue: DeviceQueue;
+    const COALESCE_WINDOW = 200; // ms
+
+    const createCommandWithId = (
+      type: 'turn' | 'brightness' | 'color',
+      params: unknown,
+      correlationId: string,
+      timestamp?: number
+    ): QueuedCommand => ({
+      type,
+      params,
+      timestamp: timestamp ?? Date.now(),
+      correlationId,
+    });
+
+    beforeEach(() => {
+      mockExecutor = vi.fn();
+      coalescingQueue = new DeviceQueue(mockExecutor, { coalesceWindowMs: COALESCE_WINDOW });
+    });
+
+    it('should merge same-type commands waiting in queue', async () => {
+      // First command takes a while to process
+      mockExecutor.mockImplementation(async () => {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return { ok: true, result: 'executed' };
+      });
+
+      const now = Date.now();
+      // First command - starts processing immediately
+      const command0 = createCommandWithId('turn', { power: 'on' }, 'cmd-0', now);
+      const promise0 = coalescingQueue.enqueue('device-1', command0);
+
+      // Wait for first command to start processing
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // These two commands will wait in queue and should be merged
+      const command1 = createCommandWithId('brightness', { level: 50 }, 'cmd-1', now + 20);
+      const command2 = createCommandWithId('brightness', { level: 75 }, 'cmd-2', now + 30);
+
+      const promise1 = coalescingQueue.enqueue('device-1', command1);
+      const promise2 = coalescingQueue.enqueue('device-1', command2);
+
+      await Promise.all([promise0, promise1, promise2]);
+
+      // First turn command + merged brightness command = 2 calls
+      expect(mockExecutor).toHaveBeenCalledTimes(2);
+    });
+
+    it('should use last-write-wins for merged commands', async () => {
+      const executedParams: unknown[] = [];
+      mockExecutor.mockImplementation(async (cmd: QueuedCommand) => {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        executedParams.push(cmd.params);
+        return { ok: true };
+      });
+
+      const now = Date.now();
+      // First command occupies the executor
+      const command0 = createCommandWithId('turn', { power: 'on' }, 'cmd-0', now);
+      const promise0 = coalescingQueue.enqueue('device-1', command0);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // These commands wait in queue and get merged
+      const command1 = createCommandWithId('brightness', { level: 50 }, 'cmd-1', now + 20);
+      const command2 = createCommandWithId('brightness', { level: 75 }, 'cmd-2', now + 30);
+      const command3 = createCommandWithId('brightness', { level: 100 }, 'cmd-3', now + 40);
+
+      const promise1 = coalescingQueue.enqueue('device-1', command1);
+      const promise2 = coalescingQueue.enqueue('device-1', command2);
+      const promise3 = coalescingQueue.enqueue('device-1', command3);
+
+      await Promise.all([promise0, promise1, promise2, promise3]);
+
+      // Should have executed: turn command, then merged brightness command
+      expect(executedParams).toHaveLength(2);
+      // Last command's params should have been used (last-write-wins)
+      expect(executedParams[1]).toEqual({ level: 100 });
+    });
+
+    it('should preserve correlation IDs of merged commands', async () => {
+      const executedCommands: QueuedCommand[] = [];
+      mockExecutor.mockImplementation(async (cmd: QueuedCommand) => {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        executedCommands.push(cmd);
+        return { ok: true };
+      });
+
+      const now = Date.now();
+      // First command occupies the executor
+      const command0 = createCommandWithId('turn', { power: 'on' }, 'corr-0', now);
+      const promise0 = coalescingQueue.enqueue('device-1', command0);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // These commands wait in queue and get merged
+      const command1 = createCommandWithId('brightness', { level: 50 }, 'corr-1', now + 20);
+      const command2 = createCommandWithId('brightness', { level: 75 }, 'corr-2', now + 30);
+
+      const promise1 = coalescingQueue.enqueue('device-1', command1);
+      const promise2 = coalescingQueue.enqueue('device-1', command2);
+
+      await Promise.all([promise0, promise1, promise2]);
+
+      // Find the merged brightness command
+      const brightnessCmd = executedCommands.find(c => c.type === 'brightness');
+      expect(brightnessCmd).toBeDefined();
+      expect(brightnessCmd?.correlationId).toBe('corr-2'); // Last one
+      expect(brightnessCmd?.mergedCorrelationIds).toContain('corr-1'); // First one
+    });
+
+    it('should include all correlation IDs in result', async () => {
+      mockExecutor.mockImplementation(async () => {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return { ok: true };
+      });
+
+      const now = Date.now();
+      // First command occupies the executor
+      const command0 = createCommandWithId('turn', { power: 'on' }, 'corr-0', now);
+      const promise0 = coalescingQueue.enqueue('device-1', command0);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // These commands wait in queue and get merged
+      const command1 = createCommandWithId('color', { r: 255, g: 0, b: 0 }, 'corr-1', now + 20);
+      const command2 = createCommandWithId('color', { r: 0, g: 255, b: 0 }, 'corr-2', now + 30);
+
+      const promise1 = coalescingQueue.enqueue('device-1', command1);
+      const promise2 = coalescingQueue.enqueue('device-1', command2);
+
+      const [, result1, result2] = await Promise.all([promise0, promise1, promise2]);
+
+      // Both results should contain all correlation IDs
+      expect(result1.correlationIds).toBeDefined();
+      expect(result1.correlationIds).toContain('corr-1');
+      expect(result1.correlationIds).toContain('corr-2');
+      expect(result2.correlationIds).toEqual(result1.correlationIds);
+    });
+
+    it('should NOT merge different command types', async () => {
+      const executedCommands: QueuedCommand[] = [];
+      mockExecutor.mockImplementation(async (cmd: QueuedCommand) => {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        executedCommands.push(cmd);
+        return { ok: true };
+      });
+
+      const now = Date.now();
+      const command1 = createCommandWithId('turn', { power: 'on' }, 'cmd-1', now);
+      const command2 = createCommandWithId('brightness', { level: 50 }, 'cmd-2', now + 50);
+
+      coalescingQueue.enqueue('device-1', command1);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      coalescingQueue.enqueue('device-1', command2);
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Both commands should have been executed separately
+      expect(executedCommands).toHaveLength(2);
+      expect(executedCommands[0].type).toBe('turn');
+      expect(executedCommands[1].type).toBe('brightness');
+    });
+
+    it('should NOT merge commands outside coalesce window', async () => {
+      const executedCommands: QueuedCommand[] = [];
+      mockExecutor.mockImplementation(async (cmd: QueuedCommand) => {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        executedCommands.push(cmd);
+        return { ok: true };
+      });
+
+      const now = Date.now();
+      // First command occupies the executor
+      const command0 = createCommandWithId('turn', { power: 'on' }, 'cmd-0', now);
+      const promise0 = coalescingQueue.enqueue('device-1', command0);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // Commands with timestamps far apart (beyond coalesce window)
+      const command1 = createCommandWithId('brightness', { level: 50 }, 'cmd-1', now - 500);
+      const command2 = createCommandWithId('brightness', { level: 75 }, 'cmd-2', now + 20);
+
+      const promise1 = coalescingQueue.enqueue('device-1', command1);
+      const promise2 = coalescingQueue.enqueue('device-1', command2);
+
+      await Promise.all([promise0, promise1, promise2]);
+
+      // All should execute since brightness commands are outside the window
+      expect(executedCommands).toHaveLength(3);
+    });
+
+    it('should not coalesce when disabled (coalesceWindowMs = 0)', async () => {
+      const executedCommands: QueuedCommand[] = [];
+      const noCoalesceQueue = new DeviceQueue(async (cmd: QueuedCommand) => {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        executedCommands.push(cmd);
+        return { ok: true };
+      }); // No options = coalesceWindowMs defaults to 0
+
+      const now = Date.now();
+      // First command occupies executor
+      const command0 = createCommandWithId('turn', { power: 'on' }, 'cmd-0', now);
+      const promise0 = noCoalesceQueue.enqueue('device-1', command0);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // These would normally be merged but coalescing is disabled
+      const command1 = createCommandWithId('brightness', { level: 50 }, 'cmd-1', now + 20);
+      const command2 = createCommandWithId('brightness', { level: 75 }, 'cmd-2', now + 30);
+
+      const promise1 = noCoalesceQueue.enqueue('device-1', command1);
+      const promise2 = noCoalesceQueue.enqueue('device-1', command2);
+
+      await Promise.all([promise0, promise1, promise2]);
+
+      // All should execute since coalescing is disabled
+      expect(executedCommands).toHaveLength(3);
+    });
+
+    it('should handle errors in merged commands', async () => {
+      let callCount = 0;
+      mockExecutor.mockImplementation(async () => {
+        callCount++;
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (callCount === 1) {
+          return { ok: true }; // First command succeeds
+        }
+        throw new Error('Command failed'); // Merged command fails
+      });
+
+      const now = Date.now();
+      // First command succeeds
+      const command0 = createCommandWithId('turn', { power: 'on' }, 'cmd-0', now);
+      const promise0 = coalescingQueue.enqueue('device-1', command0);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // These get merged and fail
+      const command1 = createCommandWithId('brightness', { level: 50 }, 'cmd-1', now + 20);
+      const command2 = createCommandWithId('brightness', { level: 75 }, 'cmd-2', now + 30);
+
+      const promise1 = coalescingQueue.enqueue('device-1', command1);
+      const promise2 = coalescingQueue.enqueue('device-1', command2);
+
+      const result0 = await promise0;
+      expect(result0.ok).toBe(true);
+
+      // Both merged commands should reject with the same error
+      await expect(promise1).rejects.toThrow('Command failed');
+      await expect(promise2).rejects.toThrow('Command failed');
+    });
+  });
 });
