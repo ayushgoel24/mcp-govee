@@ -1,16 +1,35 @@
 {
   "name": "govee-mcp-server",
   "version": "1.0.0",
-  "description": "MCP-compatible HTTP service for controlling Govee smart bulbs",
+  "description": "Model Context Protocol (MCP) server for controlling Govee smart lights with AI assistants like Claude Desktop",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "govee-mcp": "dist/stdio.js"
+  },
+  "author": "Ayush Goel <ayushgoel24@gmail.com> (https://github.com/ayushgoel24)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ayushgoel24/govee-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ayushgoel24/govee-mcp-server/issues"
+  },
+  "homepage": "https://github.com/ayushgoel24/govee-mcp-server#readme",
   "engines": {
     "node": ">=20.0.0"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
+    "start:stdio": "node dist/stdio.js",
+    "prepublishOnly": "npm run build && npm test",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -23,11 +42,21 @@
   "keywords": [
     "govee",
     "mcp",
+    "model-context-protocol",
     "smart-home",
-    "iot"
+    "smart-lights",
+    "iot",
+    "home-automation",
+    "claude",
+    "claude-desktop",
+    "ai",
+    "assistant",
+    "rgb-lights",
+    "govee-api"
   ],
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "fastify": "^4.28.1",
     "fastify-plugin": "^5.1.0",
     "zod": "^3.23.8"
