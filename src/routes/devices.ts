@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { DeviceListResult } from '../schemas/device.schema.js';
 import { authenticate } from '../middleware/auth.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 
 interface DevicesResponse {
   ok: true;
@@ -13,7 +14,7 @@ export async function devicesRoutes(server: FastifyInstance): Promise<void> {
   }>(
     '/devices',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, rateLimit],
     },
     async (_request: FastifyRequest, _reply: FastifyReply): Promise<DevicesResponse> => {
       const deviceService = server.deviceService;

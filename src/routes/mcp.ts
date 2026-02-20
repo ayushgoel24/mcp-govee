@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { mcpInvokeSchema } from '../schemas/control.schema.js';
 import { authenticate } from '../middleware/auth.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 import { mapZodError } from '../utils/errors.js';
 import type { ToolResult } from '../services/tool.service.js';
 
@@ -31,7 +32,7 @@ export async function mcpRoutes(server: FastifyInstance): Promise<void> {
   }>(
     '/mcp/invoke',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, rateLimit],
     },
     async (request: FastifyRequest<{ Body: McpInvokeBody }>, _reply: FastifyReply): Promise<McpResponse> => {
       // Validate request body against schema

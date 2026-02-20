@@ -7,6 +7,8 @@ import { mcpRoutes } from './routes/mcp.js';
 import { manifestRoutes } from './routes/manifest.js';
 import { requestIdPlugin } from './middleware/requestId.js';
 import { authPlugin } from './middleware/auth.js';
+import { rateLimitPlugin } from './middleware/rateLimit.js';
+import { securityHeadersPlugin } from './middleware/securityHeaders.js';
 import { errorHandlerPlugin } from './utils/errorHandler.js';
 import { GoveeClient } from './clients/govee.client.js';
 import { DeviceService } from './services/device.service.js';
@@ -30,6 +32,11 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
   const isDevelopment = config.nodeEnv === 'development';
 
   const server = Fastify({
+    // Request limits
+    bodyLimit: 1048576, // 1 MB max body size
+    connectionTimeout: 30000, // 30 seconds connection timeout
+    requestTimeout: 30000, // 30 seconds request timeout
+
     logger: {
       level: config.logLevel,
       serializers: {
@@ -78,7 +85,12 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
 
   // Register plugins
   void server.register(requestIdPlugin);
+  void server.register(securityHeadersPlugin);
   void server.register(authPlugin, { tokens: config.mcpClientTokens });
+  void server.register(rateLimitPlugin, {
+    limit: config.perClientRateLimit,
+    windowMs: config.rateLimitWindowMs,
+  });
   void server.register(errorHandlerPlugin, { nodeEnv: config.nodeEnv });
 
   // Initialize services
