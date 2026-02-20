@@ -6,10 +6,21 @@ import type {
   GoveeControlParams,
 } from '../types/index.js';
 import { GoveeApiError } from '../utils/errors.js';
-import { RetryHandler, type RetryLogger } from '../utils/retry.js';
+import { RetryHandler } from '../utils/retry.js';
 
 const GOVEE_API_BASE_URL = 'https://developer-api.govee.com';
 const REQUEST_TIMEOUT_MS = 10000;
+
+/**
+ * Logger interface for GoveeClient.
+ * Logs request/response information without exposing API key.
+ */
+export interface GoveeClientLogger {
+  debug: (message: string, context?: Record<string, unknown>) => void;
+  info: (message: string, context?: Record<string, unknown>) => void;
+  warn: (message: string, context?: Record<string, unknown>) => void;
+  error: (message: string, context?: Record<string, unknown>) => void;
+}
 
 export interface GoveeClientOptions {
   apiKey: string;
@@ -18,7 +29,7 @@ export interface GoveeClientOptions {
   maxRetries?: number;
   initialBackoffMs?: number;
   maxBackoffMs?: number;
-  logger?: RetryLogger;
+  logger?: GoveeClientLogger;
 }
 
 export class GoveeClient {
@@ -28,7 +39,7 @@ export class GoveeClient {
   private readonly maxRetries: number;
   private readonly initialBackoffMs: number;
   private readonly maxBackoffMs: number;
-  private readonly logger?: RetryLogger;
+  private readonly logger?: GoveeClientLogger;
 
   constructor(options: GoveeClientOptions) {
     this.apiKey = options.apiKey;
@@ -40,7 +51,7 @@ export class GoveeClient {
     this.logger = options.logger;
   }
 
-  static fromConfig(config: Config, logger?: RetryLogger): GoveeClient {
+  static fromConfig(config: Config, logger?: GoveeClientLogger): GoveeClient {
     return new GoveeClient({
       apiKey: config.goveeApiKey,
       maxRetries: config.maxRetries,
@@ -104,23 +115,36 @@ export class GoveeClient {
       initialBackoffMs: this.initialBackoffMs,
       maxBackoffMs: this.maxBackoffMs,
       correlationId,
-      logger: this.logger,
+      // Adapt GoveeClientLogger to RetryLogger (only debug and warn needed)
+      logger: this.logger ? { debug: this.logger.debug, warn: this.logger.warn } : undefined,
     });
 
-    return retryHandler.execute(() => this.request<T>(method, path, body));
+    return retryHandler.execute(() => this.request<T>(method, path, body, correlationId));
   }
 
   /**
-   * Make an HTTP request to the Govee API
+   * Make an HTTP request to the Govee API.
+   * Logs request/response without exposing API key.
    */
   private async request<T>(
     method: 'GET' | 'PUT' | 'POST',
     path: string,
-    body?: unknown
+    body?: unknown,
+    correlationId?: string
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    const startTime = Date.now();
+
+    // Log request (never log API key)
+    this.log('debug', `Govee API request: ${method} ${path}`, {
+      method,
+      path,
+      correlationId,
+      // Log sanitized body (exclude any potential sensitive data patterns)
+      hasBody: body !== undefined,
+    });
 
     try {
       const response = await fetch(url, {
@@ -134,35 +158,89 @@ export class GoveeClient {
       });
 
       clearTimeout(timeoutId);
+      const durationMs = Date.now() - startTime;
 
       // Handle HTTP errors
       if (!response.ok) {
+        this.log('warn', `Govee API error response: ${response.status}`, {
+          method,
+          path,
+          statusCode: response.status,
+          durationMs,
+          correlationId,
+        });
         await this.handleErrorResponse(response);
       }
 
       const data = (await response.json()) as T;
+
+      // Log successful response
+      this.log('debug', `Govee API response: ${response.status}`, {
+        method,
+        path,
+        statusCode: response.status,
+        durationMs,
+        correlationId,
+      });
+
       return data;
     } catch (error) {
       clearTimeout(timeoutId);
+      const durationMs = Date.now() - startTime;
 
       // Handle abort (timeout)
       if (error instanceof Error && error.name === 'AbortError') {
+        this.log('error', 'Govee API request timed out', {
+          method,
+          path,
+          durationMs,
+          timeoutMs: this.timeoutMs,
+          correlationId,
+        });
         throw GoveeApiError.unavailable('Govee API request timed out');
       }
 
-      // Re-throw GoveeApiError
+      // Re-throw GoveeApiError (already logged above)
       if (error instanceof GoveeApiError) {
         throw error;
       }
 
       // Handle network errors
       if (error instanceof TypeError) {
+        this.log('error', 'Govee API network error', {
+          method,
+          path,
+          durationMs,
+          error: error.message,
+          correlationId,
+        });
         throw GoveeApiError.unavailable('Failed to connect to Govee API');
       }
 
       // Unknown error
+      this.log('error', 'Govee API unknown error', {
+        method,
+        path,
+        durationMs,
+        error: error instanceof Error ? error.message : String(error),
+        correlationId,
+      });
       throw GoveeApiError.unavailable('Unknown error communicating with Govee API');
     }
+  }
+
+  /**
+   * Log a message with the client's logger if available.
+   */
+  private log(
+    level: 'debug' | 'info' | 'warn' | 'error',
+    message: string,
+    context?: Record<string, unknown>
+  ): void {
+    if (this.logger === undefined) {
+      return;
+    }
+    this.logger[level](message, context);
   }
 
   /**
