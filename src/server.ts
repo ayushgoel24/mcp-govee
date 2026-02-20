@@ -15,6 +15,7 @@ import { ToolService } from './services/tool.service.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
+    goveeClient: GoveeClient;
     deviceService: DeviceService;
     toolService: ToolService;
   }
@@ -85,6 +86,7 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
   const deviceService = new DeviceService(goveeClient, config);
   const controlService = new ControlService(deviceService, goveeClient, config);
   const toolService = new ToolService(deviceService, controlService);
+  server.decorate('goveeClient', goveeClient);
   server.decorate('deviceService', deviceService);
   server.decorate('toolService', toolService);
 
