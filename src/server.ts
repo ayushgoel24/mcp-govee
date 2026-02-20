@@ -25,6 +25,7 @@ export interface ServerOptions {
 
 export function createServer(options: ServerOptions = {}): FastifyInstance {
   const config = options.config ?? getConfig();
+  const isDevelopment = config.nodeEnv === 'development';
 
   const server = Fastify({
     logger: {
@@ -36,12 +37,32 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
             url: request.url,
             hostname: request.hostname,
             requestId: request.id,
+            userAgent: request.headers['user-agent'],
           };
         },
         res(reply): Record<string, unknown> {
           return {
             statusCode: reply.statusCode,
           };
+        },
+        // Custom error serializer - only include stack traces in development
+        err(error: Error): { type: string; message: string; stack: string; [key: string]: unknown } {
+          const serialized: { type: string; message: string; stack: string; [key: string]: unknown } = {
+            type: error.name,
+            message: error.message,
+            // Include stack trace only in development mode
+            stack: isDevelopment && error.stack ? error.stack : '',
+          };
+
+          // Include additional properties from AppError
+          if ('code' in error) {
+            serialized.code = (error as { code: string }).code;
+          }
+          if ('statusCode' in error) {
+            serialized.statusCode = (error as { statusCode: number }).statusCode;
+          }
+
+          return serialized;
         },
       },
       redact: {
