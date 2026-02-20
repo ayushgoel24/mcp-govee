@@ -62,11 +62,13 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.3",
     "@types/node": "^20.14.10",
     "@typescript-eslint/eslint-plugin": "^8.56.0",
-    "@typescript-eslint/parser": "^7.16.0",
+    "@typescript-eslint/parser": "^8.56.0",
     "@vitest/coverage-v8": "^2.0.2",
     "eslint": "^10.0.1",
+    "globals": "^17.3.0",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3",
     "vitest": "^2.0.2"
