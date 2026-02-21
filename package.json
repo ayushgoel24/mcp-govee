@@ -59,7 +59,7 @@
     "@modelcontextprotocol/sdk": "^1.26.0",
     "fastify": "^4.28.1",
     "fastify-plugin": "^5.1.0",
-    "zod": "^3.23.8"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.3",
